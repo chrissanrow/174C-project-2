@@ -34,6 +34,7 @@ class Arc {
             Tz: false,
         }
     }
+    
     set_dof(Rx, Ry, Rz, Tx, Ty, Tz) {
         this.dof.Rx = Rx;
         this.dof.Ry = Ry;
@@ -41,6 +42,36 @@ class Arc {
         this.dof.Tx = Tx;
         this.dof.Ty = Ty;
         this.dof.Tz = Tz;
+    }
+
+    // theta is 6x1 vector of DOF values
+    update_articulation_matrix(theta) {
+        this.articulation_matrix = Mat4.identity();
+        let i = 0;
+        if (this.dof.Rx) {
+            this.articulation_matrix.post_multiply(Mat4.rotation(theta[i], 1, 0, 0));
+            i++;
+        }
+        if (this.dof.Ry) {
+            this.articulation_matrix.post_multiply(Mat4.rotation(theta[i], 0, 1, 0));
+            i++;
+        }
+        if (this.dof.Rz) {
+            this.articulation_matrix.post_multiply(Mat4.rotation(theta[i], 0, 0, 1));
+            i++;
+        }
+        if (this.dof.Tx) {
+            this.articulation_matrix.post_multiply(Mat4.translation(theta[i], 0, 0));
+            i++;
+        }
+        if (this.dof.Ty) {
+            this.articulation_matrix.post_multiply(Mat4.translation(0, theta[i], 0));
+            i++;
+        }
+        if (this.dof.Tz) {
+            this.articulation_matrix.post_multiply(Mat4.translation(0, 0, theta[i]));
+            i++;
+        }
     }
 }
 
