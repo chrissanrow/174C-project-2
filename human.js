@@ -45,7 +45,7 @@ class Arc {
         this.dof.Tz = Tz;
     }
 
-    // theta is 6x1 vector of DOF values
+    // theta is 6x1 vector -> truncated to only contain relevant DOF
     update_articulation_matrix(theta) {
         this.articulation_matrix = Mat4.identity();
         let i = 0;
@@ -217,40 +217,49 @@ class Human_Model {
 
         // -- DOF setup --
         // animation does not require DOF for lower half of body
+        // TODO: include left arm in theta so we can create a natural pose
         // 3 translational at root
         this.root.set_dof(false, false, false, true, true, true);
 
         // 3 rotational at shoulders
         this.r_shoulder.set_dof(true, true, true, false, false, false);
-        this.l_shoulder.set_dof(true, true, true, false, false, false);
 
         // 2 rotational at elbow (x and y)
         this.r_elbow.set_dof(true, true, false, false, false, false);
-        this.l_elbow.set_dof(true, true, false, false, false, false);
 
         // 2 rotational at wrist (y and z)
         this.r_wrist.set_dof(false, true, true, false, false, false);
-        this.l_wrist.set_dof(false, true, true, false, false, false);
+
+        const kinematic_chain_size = 10; // for animation, only concerned with root -> rshoulder -> relbow -> rwrist
+
+        this.theta = new Array(kinematic_chain_size).fill(0);
     }
 
-    get_end_effector_position(){
-        // FK to get end effector position
+    _forward_kinematics() {
+        this.root.update_articulation_matrix(this.theta.slice(0, 3));
+        this.r_shoulder.update_articulation_matrix(this.theta.slice(3, 6));
+        this.r_elbow.update_articulation_matrix(this.theta.slice(6, 8));
+        this.r_wrist.update_articulation_matrix(this.theta.slice(8, 10));
+    }
+    
+    _get_end_effector_position(){
+        // FK to get end effector position (same as _rec_update)
         if (arc !== null) {
             const L = arc.location_matrix;
             const A = arc.articulation_matrix;
             matrix.post_multiply(L.times(A));
             this.matrix_stack.push(matrix.copy());
-
+            
             if(arc.child_node.end_effector) {
                 const end_effector_pos = matrix.times(arc.child_node.end_effector_offset);
                 return vec3(end_effector_pos[0], end_effector_pos[1], end_effector_pos[2]);
             }
-
+            
             const node = arc.child_node;
             const T = node.transform_matrix;
             matrix.post_multiply(T);
             node.shape.draw(webgl_manager, uniforms, matrix, material);
-
+            
             matrix = this.matrix_stack.pop();
             for (const next_arc of node.children_arcs) {
                 this.matrix_stack.push(matrix.copy());
@@ -258,6 +267,31 @@ class Human_Model {
                 matrix = this.matrix_stack.pop();
             }
         }
+    }
+
+    // from wikipedia (approximation of jacobian matrix): https://en.wikipedia.org/wiki/Inverse_kinematics#The_Jacobian_inverse_technique
+    // partial(p_i)/partial(x_k) ~ (p_i(x_{0,k} + h) - p_i(x_{0,k}))/h, where x is equivalent to model's theta vector
+    _compute_jacobian() {
+        let J = [];
+        for(let i = 0; i < 3; i++) {
+            J.push([]);
+        }
+
+        const p_at_x0 = this._get_end_effector_position();
+        const h = 0.001;
+
+        for(let i = 0; i < 10; i++) {
+            // compute p_i(x_{0,k} + h) using FK
+            this.theta[i] += h;
+            this._forward_kinematics();
+            const p_at_x0_plus_h = this._get_end_effector_position();
+            this.theta[i] -= h; // reset theta
+            
+            for(let k = 0; k < 3; k++) {
+                J[k][i] = (p_at_x0_plus_h[k] - p_at_x0[k]) / h; // apply approximation
+            }
+        }
+        return J;
     }
 
     draw(webgl_manager, uniforms, material) {
