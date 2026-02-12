@@ -1,4 +1,6 @@
 import {tiny, defs} from './examples/common.js';
+import { Spline } from './spline.js';
+import { Curve_shape } from './spline.js';
 
 // Pull these names into this module's scope for convenience:
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
@@ -44,8 +46,10 @@ const Assignment2_base = defs.Assignment2_base =
 
         this.ball_location = vec3(1, 1, 1);
         this.ball_radius = 0.25;
-
-        // TODO: you should create a Spline class instance
+        
+        this.spline = new Spline();
+        this.curve = new Curve_shape( null, 100 );
+        this.num_samples = 1000;
       }
 
       render_animation( caller )
