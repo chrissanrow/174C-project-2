@@ -1,6 +1,7 @@
 import {tiny, defs} from './examples/common.js';
 import { Spline } from './spline.js';
 import { Curve_shape } from './spline.js';
+import { Human_Model } from './human.js';
 
 // Pull these names into this module's scope for convenience:
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
@@ -48,8 +49,21 @@ const Assignment2_base = defs.Assignment2_base =
         this.ball_radius = 0.25;
         
         this.spline = new Spline();
-        this.curve = new Curve_shape( null, 100 );
+        // figure 8 shape @ 3, 6, -0.88
+        this.spline.add_control_point(3, 6, -0.88, -1, 1, 0);
+        this.spline.add_control_point(2, 7, -0.88, 0, 13.25, 0);
+        this.spline.add_control_point(3, 8, -0.88, 13.25, 0, 0);
+        this.spline.add_control_point(4, 7, -0.88, 0, -13.25, 0);
+        this.spline.add_control_point(3, 6, -0.88, -1, -1, 0);
+        this.spline.add_control_point(2, 5, -0.88, 0, -13.25, 0);
+        this.spline.add_control_point(3, 4, -0.88, 13.25, 0, 0);
+        this.spline.add_control_point(4, 5, -0.88, 0, 13.25, 0);
+        this.spline.add_control_point(3, 6, -0.88, -1, 1, 0);
+        const curve_func = (t) => this.spline.get_position(t);
+        this.curve = new Curve_shape( curve_func, 400 );
         this.num_samples = 1000;
+
+        this.human = new Human_Model();
       }
 
       render_animation( caller )
@@ -142,6 +156,10 @@ export class Assignment2 extends Assignment2_base
     this.shapes.box.draw( caller, this.uniforms, wall_transform, { ...this.materials.plastic, color: wall_color } );
     let board_transform = Mat4.translation(3, 6, -1).times(Mat4.scale(2.5, 2.5, 0.1));
     this.shapes.box.draw( caller, this.uniforms, board_transform, { ...this.materials.plastic, color: blackboard_color } );
+
+    this.human.draw(caller, this.uniforms, this.materials.metal);
+
+    this.curve.draw(caller, this.uniforms);
   }
 
   render_controls()
