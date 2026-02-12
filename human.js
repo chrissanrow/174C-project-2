@@ -23,7 +23,8 @@ class Arc {
         this.child_node = child_node;
         this.location_matrix = location_matrix;
         this.articulation_matrix = Mat4.identity();
-        this.end_effector = null;
+        this.end_effector = false;
+        this.end_effector_offset = vec3(0, 0, 0, 1);
         this.dof = {
             Rx: false,
             Ry: false,
@@ -34,7 +35,7 @@ class Arc {
             Tz: false,
         }
     }
-    
+
     set_dof(Rx, Ry, Rz, Tx, Ty, Tz) {
         this.dof.Rx = Rx;
         this.dof.Ry = Ry;
@@ -197,6 +198,9 @@ class Human_Model {
         let r_hand_scale = Mat4.scale(.4, .3, .3);
         r_hand_scale.pre_multiply(Mat4.translation(0.4, 0, 0));
         this.r_hand_node = new Node("r_hand", sphere_shape, r_hand_scale);
+        // right hand is end effector
+        this.r_hand_node.end_effector = true;
+        this.r_hand_node.end_effector_offset = vec3(0.4, 0, 0, 1);
 
         let l_hand_scale = Mat4.scale(.4, .3, .2);
         l_hand_scale.pre_multiply(Mat4.translation(-0.4, 0, 0));
@@ -227,6 +231,33 @@ class Human_Model {
         // 2 rotational at wrist (y and z)
         this.r_wrist.set_dof(false, true, true, false, false, false);
         this.l_wrist.set_dof(false, true, true, false, false, false);
+    }
+
+    get_end_effector_position(){
+        // FK to get end effector position
+        if (arc !== null) {
+            const L = arc.location_matrix;
+            const A = arc.articulation_matrix;
+            matrix.post_multiply(L.times(A));
+            this.matrix_stack.push(matrix.copy());
+
+            if(arc.child_node.end_effector) {
+                const end_effector_pos = matrix.times(arc.child_node.end_effector_offset);
+                return vec3(end_effector_pos[0], end_effector_pos[1], end_effector_pos[2]);
+            }
+
+            const node = arc.child_node;
+            const T = node.transform_matrix;
+            matrix.post_multiply(T);
+            node.shape.draw(webgl_manager, uniforms, matrix, material);
+
+            matrix = this.matrix_stack.pop();
+            for (const next_arc of node.children_arcs) {
+                this.matrix_stack.push(matrix.copy());
+                this._rec_draw(next_arc, matrix, webgl_manager, uniforms, material);
+                matrix = this.matrix_stack.pop();
+            }
+        }
     }
 
     draw(webgl_manager, uniforms, material) {
