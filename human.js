@@ -1,4 +1,5 @@
 import {tiny, defs} from './examples/common.js';
+import { math } from './tiny-graphics-math.js';
 
 // Pull these names into this module's scope for convenience:
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
@@ -235,12 +236,31 @@ class Human_Model {
         this.theta = new Array(kinematic_chain_size).fill(0);
     }
 
+    iterative_inverse_kinematics(pg) {
+        const epsilon = 0.01;
+        const p_0 = this._get_end_effector_position();
+        let p = p_0;
+        const alpha = 0.1; // factor for dx
+        let error_vec = math.subtract(pg, p_0);
+        while(math.norm(error_vec) > epsilon) {
+            const dx = math.multiply(alpha, error_vec);
+            const J = this._compute_jacobian();
+            const dtheta = this._compute_theta(J, dx);
+            this.theta = math.add(this.theta, dtheta.flat());
+            this._forward_kinematics();
+            // TODO: may have to clamp angles to represent joint limits
+            p = math.add(p, dx);
+            error_vec = math.subtract(pg, p);
+        }
+    }
+    
     _forward_kinematics() {
         this.root.update_articulation_matrix(this.theta.slice(0, 3));
         this.r_shoulder.update_articulation_matrix(this.theta.slice(3, 6));
         this.r_elbow.update_articulation_matrix(this.theta.slice(6, 8));
         this.r_wrist.update_articulation_matrix(this.theta.slice(8, 10));
     }
+
     
     _get_end_effector_position(){
         // FK to get end effector position (same as _rec_update)
@@ -272,9 +292,9 @@ class Human_Model {
     // from wikipedia (approximation of jacobian matrix): https://en.wikipedia.org/wiki/Inverse_kinematics#The_Jacobian_inverse_technique
     // partial(p_i)/partial(x_k) ~ (p_i(x_{0,k} + h) - p_i(x_{0,k}))/h, where x is equivalent to model's theta vector
     _compute_jacobian() {
-        let J = [];
+        let J = new Array(3);
         for(let i = 0; i < 3; i++) {
-            J.push([]);
+            J[i] = new Array(10);
         }
 
         const p_at_x0 = this._get_end_effector_position();
@@ -292,6 +312,14 @@ class Human_Model {
             }
         }
         return J;
+    }
+
+    _compute_theta(J, dx) {
+        // J^T * dx = J^T * J * dtheta
+        const A = math.multiply(math.transpose(J), J);
+        const b = math.multiply(math.transpose(J), dx);
+        const dtheta = math.lusolve(A, b);
+        return dtheta;
     }
 
     draw(webgl_manager, uniforms, material) {
