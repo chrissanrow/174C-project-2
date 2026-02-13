@@ -1,5 +1,5 @@
 import {tiny, defs} from './examples/common.js';
-import { create, all } from 'https://cdn.jsdelivr.net/npm/mathjs@11.11.0/+esm'
+import { create, all } from 'https://cdn.jsdelivr.net/npm/mathjs@15.1.1/+esm'
 
 
 // Pull these names into this module's scope for convenience:
