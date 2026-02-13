@@ -1,8 +1,11 @@
 import {tiny, defs} from './examples/common.js';
-import { math } from './tiny-graphics-math.js';
+import { create, all } from 'https://cdn.jsdelivr.net/npm/mathjs@11.11.0/+esm'
+
 
 // Pull these names into this module's scope for convenience:
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
+
+const mathjs = create(all);
 
 const shapes = {
     'sphere': new defs.Subdivision_Sphere( 5 ),
@@ -24,8 +27,7 @@ class Arc {
         this.child_node = child_node;
         this.location_matrix = location_matrix;
         this.articulation_matrix = Mat4.identity();
-        this.end_effector = false;
-        this.end_effector_offset = vec3(0, 0, 0, 1);
+        this.has_end_effector = false;
         this.dof = {
             Rx: false,
             Ry: false,
@@ -77,6 +79,15 @@ class Arc {
     }
 }
 
+class End_Effector{
+    constructor(name, parent, offset){
+        this.name = name;
+        this.parent = parent;
+        this.offset = offset;
+        this.global_position = null;
+    }
+}
+
 export const Human_Model =
 class Human_Model {
     constructor() {
@@ -89,7 +100,7 @@ class Human_Model {
         this.torso_node = new Node("torso", sphere_shape, torso_scale);
 
         // root arc (no parent)
-        const root_location = Mat4.translation(-1.5, 5.9, 0);
+        const root_location = Mat4.translation(0, 6, 2);
         this.root = new Arc("root", null, this.torso_node, root_location);
 
         // lower half of body
@@ -199,9 +210,6 @@ class Human_Model {
         let r_hand_scale = Mat4.scale(.4, .3, .3);
         r_hand_scale.pre_multiply(Mat4.translation(0.4, 0, 0));
         this.r_hand_node = new Node("r_hand", sphere_shape, r_hand_scale);
-        // right hand is end effector
-        this.r_hand_node.end_effector = true;
-        this.r_hand_node.end_effector_offset = vec3(0.4, 0, 0, 1);
 
         let l_hand_scale = Mat4.scale(.4, .3, .2);
         l_hand_scale.pre_multiply(Mat4.translation(-0.4, 0, 0));
@@ -212,78 +220,99 @@ class Human_Model {
         this.r_wrist = new Arc("r_wrist", this.rl_arm_node, this.r_hand_node, r_wrist_location);
         this.rl_arm_node.children_arcs.push(this.r_wrist);
 
+        // right hand is end effector
+        this.end_effector = new End_Effector("r_hand", this.r_hand_node, vec4(0.8, 0, 0, 1));
+        this.r_wrist.has_end_effector = true;
+
         const l_wrist_location = Mat4.translation(-2, 0, 0);
         this.l_wrist = new Arc("l_wrist", this.ll_arm_node, this.l_hand_node, l_wrist_location);
         this.ll_arm_node.children_arcs.push(this.l_wrist);
 
         // -- DOF setup --
         // animation does not require DOF for lower half of body
-        // TODO: include left arm in theta so we can create a natural pose
+        // TODO: to beautify scene maybe make left arm go to the side of the human
         // 3 translational at root
         this.root.set_dof(false, false, false, true, true, true);
 
         // 3 rotational at shoulders
         this.r_shoulder.set_dof(true, true, true, false, false, false);
+        this.l_shoulder.set_dof(true, true, true, false, false, false);
 
         // 2 rotational at elbow (x and y)
         this.r_elbow.set_dof(true, true, false, false, false, false);
+        this.l_shoulder.set_dof(true, true, false, false, false, false);
 
         // 2 rotational at wrist (y and z)
         this.r_wrist.set_dof(false, true, true, false, false, false);
+        this.l_wrist.set_dof(false, true, true, false, false, false);
 
-        const kinematic_chain_size = 10; // for animation, only concerned with root -> rshoulder -> relbow -> rwrist
+        // for animation, only concerned with dof for root -> rshoulder -> relbow -> rwrist
+        const kinematic_chain_size = 10;
 
         this.theta = new Array(kinematic_chain_size).fill(0);
+        this._apply_joint_angles();
     }
 
     iterative_inverse_kinematics(pg) {
-        const epsilon = 0.01;
+        // console.log("Starting IK with pg: ", pg);
+        const epsilon = 0.15;
         const p_0 = this._get_end_effector_position();
-        let p = p_0;
+        let p = p_0.copy();
         const alpha = 0.1; // factor for dx
-        let error_vec = math.subtract(pg, p_0);
-        while(math.norm(error_vec) > epsilon) {
-            const dx = math.multiply(alpha, error_vec);
+        let error_vec = pg.minus(p);
+        // console.log("Initial error vector: ", error_vec);
+        this._apply_joint_angles();
+
+        while(error_vec.norm() > epsilon) {
+            const dx = error_vec.times(alpha);
             const J = this._compute_jacobian();
-            const dtheta = this._compute_theta(J, dx);
-            this.theta = math.add(this.theta, dtheta.flat());
-            this._forward_kinematics();
-            // TODO: may have to clamp angles to represent joint limits
-            p = math.add(p, dx);
-            error_vec = math.subtract(pg, p);
+            const dtheta = this._compute_d_theta(J, dx);
+            // console.log("Current theta: ", this.theta);
+            for(let i = 0; i < this.theta.length; i++) {
+                this.theta[i] += dtheta[i][0]; // theta ~ theta + dtheta
+            }
+            this._clamp_joint_angles();
+            this._apply_joint_angles();
+            p = this._get_end_effector_position();
+            error_vec = pg.minus(p);
+            // console.log("Current end effector position: ", p);
+            // console.log("Current error vector: ", error_vec);
         }
     }
     
-    _forward_kinematics() {
+    _apply_joint_angles() {
         this.root.update_articulation_matrix(this.theta.slice(0, 3));
         this.r_shoulder.update_articulation_matrix(this.theta.slice(3, 6));
         this.r_elbow.update_articulation_matrix(this.theta.slice(6, 8));
         this.r_wrist.update_articulation_matrix(this.theta.slice(8, 10));
     }
-
     
-    _get_end_effector_position(){
-        // FK to get end effector position (same as _rec_update)
+    _get_end_effector_position() {
+        this.matrix_stack = [];
+        this._rec_update(this.root, Mat4.identity());
+        const v = this.end_effector.global_position;
+        return vec3(v[0], v[1], v[2]);
+    }
+
+    _rec_update(arc, matrix){
         if (arc !== null) {
             const L = arc.location_matrix;
             const A = arc.articulation_matrix;
             matrix.post_multiply(L.times(A));
             this.matrix_stack.push(matrix.copy());
             
-            if(arc.child_node.end_effector) {
-                const end_effector_pos = matrix.times(arc.child_node.end_effector_offset);
-                return vec3(end_effector_pos[0], end_effector_pos[1], end_effector_pos[2]);
+            if (arc.has_end_effector) {
+                this.end_effector.global_position = matrix.times(this.end_effector.offset);
             }
-            
+
             const node = arc.child_node;
             const T = node.transform_matrix;
             matrix.post_multiply(T);
-            node.shape.draw(webgl_manager, uniforms, matrix, material);
-            
+
             matrix = this.matrix_stack.pop();
             for (const next_arc of node.children_arcs) {
                 this.matrix_stack.push(matrix.copy());
-                this._rec_draw(next_arc, matrix, webgl_manager, uniforms, material);
+                this._rec_update(next_arc, matrix);
                 matrix = this.matrix_stack.pop();
             }
         }
@@ -298,27 +327,85 @@ class Human_Model {
         }
 
         const p_at_x0 = this._get_end_effector_position();
-        const h = 0.001;
+        const h = 0.01;
 
         for(let i = 0; i < 10; i++) {
             // compute p_i(x_{0,k} + h) using FK
             this.theta[i] += h;
-            this._forward_kinematics();
+            this._apply_joint_angles();
             const p_at_x0_plus_h = this._get_end_effector_position();
-            this.theta[i] -= h; // reset theta
             
             for(let k = 0; k < 3; k++) {
                 J[k][i] = (p_at_x0_plus_h[k] - p_at_x0[k]) / h; // apply approximation
             }
+            this.theta[i] -= h; // reset theta
         }
         return J;
     }
 
-    _compute_theta(J, dx) {
+    _clamp_joint_angles() {
+        // force Ty to be 0 to keep feet on the ground
+        // (root arc Tx, Ty, Tz) clamp to prevent excessive body translation
+        if (this.theta[0] < -0.1){
+            this.theta[0] = -0.1;
+        }
+        else if (this.theta[0] > 0.1){
+            this.theta[0] = 0.1;
+        }
+        this.theta[1] = 0;
+        if (this.theta[2] < -0.1){
+            this.theta[2] = -0.1;
+        }
+        else if (this.theta[2] > 0.1){
+            this.theta[2] = 0.1;
+        }
+
+        // (shoulder arc Rx, Ry, Rz) clamp to make internal rotation less extreme
+        
+        for (let i = 3; i < 6; i++) {
+            if (this.theta[i] < -Math.PI/3){
+                this.theta[i] = -Math.PI/3;
+            }
+            else if (this.theta[i] > Math.PI/2){
+                this.theta[i] = Math.PI/2;
+            }
+        }
+
+        // (elbow arc Rx, Ry) clamp to prevent inward bending of elbow
+        for (let i = 6; i < 8; i++) {
+            if (this.theta[i] < 0){
+                this.theta[i] = 0;
+            }
+            else if (this.theta[i] > Math.PI){
+                this.theta[i] = Math.PI;
+            }
+        }
+
+        // (wrist arc Ry, Rz) clamp to +-90 degrees
+        for (let i = 8; i < 10; i++) {
+            if (this.theta[i] < -Math.PI/2){
+                this.theta[i] = -Math.PI/2;
+            }
+            else if (this.theta[i] > Math.PI/2){
+                this.theta[i] = Math.PI/2;
+            }
+        }
+    }
+
+    _compute_d_theta(J, dx) {
         // J^T * dx = J^T * J * dtheta
-        const A = math.multiply(math.transpose(J), J);
-        const b = math.multiply(math.transpose(J), dx);
-        const dtheta = math.lusolve(A, b);
+        // convert vector dx to 3x1 matrix for mathjs
+        const dx_matrix = mathjs.matrix([[dx[0]], [dx[1]], [dx[2]]]);
+        const JT = mathjs.transpose(J);
+        const A = mathjs.multiply(JT, J);
+
+        for (let i = 0; i < 10; i++) {
+            A[i][i] += 1;
+        }
+
+        const b = mathjs.multiply(JT, dx_matrix);
+        const dtheta = mathjs.lusolve(A, b);
+        //console.log("dtheta: ", dtheta);
         return dtheta;
     }
 

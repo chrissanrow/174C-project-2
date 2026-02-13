@@ -20,7 +20,7 @@ const Assignment2_base = defs.Assignment2_base =
       // isolating that code so it can be experimented with on its own.
       init()
       {
-        console.log("init")
+        //console.log("init")
 
         // constructor(): Scenes begin by populating initial values like the Shapes and Materials they'll need.
         this.hover = this.swarm = false;
@@ -43,6 +43,7 @@ const Assignment2_base = defs.Assignment2_base =
         this.materials = {};
         this.materials.plastic = { shader: phong, ambient: .2, diffusivity: 1, specularity: .5, color: color( .9,.5,.9,1 ) }
         this.materials.metal   = { shader: phong, ambient: .2, diffusivity: 1, specularity:  1, color: color( .9,.5,.9,1 ) }
+        this.materials.skin   = { shader: phong, ambient: .2, diffusivity: 1, specularity:  0.1, color: color( .9,.70,.26,1 ) }
         this.materials.rgb = { shader: tex_phong, ambient: .5, texture: new Texture( "assets/rgb.jpg" ) }
 
         this.ball_location = vec3(1, 1, 1);
@@ -60,10 +61,12 @@ const Assignment2_base = defs.Assignment2_base =
         this.spline.add_control_point(4, 5, -0.88, 0, 13.25, 0);
         this.spline.add_control_point(3, 6, -0.88, -1, 1, 0);
         const curve_func = (t) => this.spline.get_position(t);
-        this.curve = new Curve_shape( curve_func, 400 );
+        this.curve = new Curve_shape( curve_func, 400, color(0.97, 1, 0.89, 1) );
         this.num_samples = 1000;
 
         this.human = new Human_Model();
+        this.on_blackboard = false;
+        this.start_time = 0;
       }
 
       render_animation( caller )
@@ -150,16 +153,34 @@ export class Assignment2 extends Assignment2_base
     let floor_transform = Mat4.translation(0, 0, 0).times(Mat4.scale(10, 0.01, 10));
     this.shapes.box.draw( caller, this.uniforms, floor_transform, { ...this.materials.plastic, color: yellow } );
 
-    // TODO: you should draw scene here.
-    // TODO: you can change the wall and board as needed.
     let wall_transform = Mat4.translation(0, 5, -1.2).times(Mat4.scale(6, 5, 0.1));
     this.shapes.box.draw( caller, this.uniforms, wall_transform, { ...this.materials.plastic, color: wall_color } );
     let board_transform = Mat4.translation(3, 6, -1).times(Mat4.scale(2.5, 2.5, 0.1));
     this.shapes.box.draw( caller, this.uniforms, board_transform, { ...this.materials.plastic, color: blackboard_color } );
 
-    this.human.draw(caller, this.uniforms, this.materials.metal);
+    this.human.draw(caller, this.uniforms, this.materials.skin);
 
-    this.curve.draw(caller, this.uniforms);
+    // START OF SCENE
+
+    if(!this.on_blackboard){
+      // smoothly move end effector to board
+      const target = vec3(3, 6, -0.88);
+      const current_position = this.human._get_end_effector_position();
+      let alpha = Math.min(1, t % 1);
+      const new_position = current_position.times(1 - alpha).plus(target.times(alpha));
+      this.human.iterative_inverse_kinematics(new_position);
+      if(current_position.minus(target).norm() < 0.3){
+        this.on_blackboard = true;
+        this.start_time = t;
+      }
+    }
+    // SCENE LOOP
+    else{
+      this.curve.draw(caller, this.uniforms);
+      let local_t = ((this.t - this.start_time) / 2) % 1;
+      let target = this.spline.get_position(local_t);
+      this.human.iterative_inverse_kinematics(target);
+    }
   }
 
   render_controls()
@@ -168,8 +189,15 @@ export class Assignment2 extends Assignment2_base
     // buttons with key bindings for affecting this scene, and live info readouts.
     this.control_panel.innerHTML += "Assignment 2: IK Engine";
     this.new_line();    
-    // TODO: You can add your button events for debugging. (optional)
-    this.key_triggered_button( "Debug", [ "Shift", "D" ], null );
+    this.key_triggered_button( "Debug", [ "Shift", "D" ], this.debug_event );
     this.new_line();
+  }
+
+  debug_event()
+  {
+    this.human.debug();
+    console.log("Current end effector position: ", this.human._get_end_effector_position());
+    const target = vec3(3, 6, -1);
+    this.human.iterative_inverse_kinematics(target);
   }
 }
